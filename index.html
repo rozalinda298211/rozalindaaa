@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="ar">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Omar ❤️ Rozz</title>
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: #000;
+      overflow: hidden;
+      touch-action: manipulation;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    }
+    canvas { display: block; }
+    .hint {
+      position: fixed;
+      left: 14px;
+      bottom: 14px;
+      color: rgba(255,255,255,.55);
+      font-size: 12px;
+      user-select: none;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <div class="hint">Touch/Click: Restart • Space: Restart</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById("c");
+  const ctx = canvas.getContext("2d");
+
+  // ==== SETTINGS ====
+  const NAME_LEFT  = "Omar";
+  const NAME_RIGHT = "Rozz";
+  const HEART_EMOJI = "❤️"; // ممكن تغيّرها
+  const SHOW_TEXT_AFTER_MS = 1200; // بعد كم ملي ثانية يبدأ يطلع النص
+  const TYPE_SPEED = 14; // حروف بالثانية
+  const POINTS = 1100;  // كثافة نقاط القلب
+  const TRAIL_ALPHA = 0.18; // آثار الحركة (0 = بدون أثر)
+  const HEART_SCALE_FACTOR = 0.028; // حجم القلب (حل مشكلة الكِبر/الخروج)
+  const TEXT_SIZE_DESKTOP = 48;
+  const TEXT_SIZE_MOBILE  = 36;
+
+  // نبض القلب (أقوى)
+  const BEAT_FREQ = 0.0062; // سرعة النبض
+  const BEAT_POWER = 0.11;  // قوة النبض (أكبر = أقوى)
+
+  // ==== RESIZE / DPR ====
+  let W = 0, H = 0, dpr = 1;
+  function resize() {
+    dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width  = Math.floor(W * dpr);
+    canvas.height = Math.floor(H * dpr);
+    canvas.style.width = W + "px";
+    canvas.style.height = H + "px";
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  window.addEventListener("resize", () => { resize(); init(); });
+
+  // ==== HEART PARAMETRIC ====
+  function heartPoint(t) {
+    const x = 16 * Math.pow(Math.sin(t), 3);
+    const y =
+      13 * Math.cos(t) -
+      5 * Math.cos(2 * t) -
+      2 * Math.cos(3 * t) -
+      Math.cos(4 * t);
+    return { x, y };
+  }
+
+  // ==== PARTICLES ====
+  class Particle {
+    constructor(tx, ty) {
+      this.reset(tx, ty, true);
+    }
+    reset(tx, ty, first=false) {
+      this.tx = tx;
+      this.ty = ty;
+      if (first) {
+        this.x = Math.random() * W;
+        this.y = Math.random() * H;
+      } else {
+        // restart: explode then gather
+        this.x = W/2 + (Math.random()-0.5) * W;
+        this.y = H/2 + (Math.random()-0.5) * H;
+      }
+      this.vx = 0;
+      this.vy = 0;
+      this.r = 1.4 + Math.random() * 1.8;
+      this.seed = Math.random() * 1000;
+    }
+    update(k) {
+      const dx = this.tx - this.x;
+      const dy = this.ty - this.y;
+
+      // spring attraction
+      this.vx += dx * (0.0022 * k);
+      this.vy += dy * (0.0022 * k);
+
+      // damping
+      this.vx *= 0.84;
+      this.vy *= 0.84;
+
+      this.x += this.vx;
+      this.y += this.vy;
+    }
+    draw(hue) {
+      ctx.fillStyle = `hsla(${hue}, 100%, 65%, 0.92)`;
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, this.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  let particles = [];
+  let baseTargets = []; // normalized heart points
+  let scale = 1;
+
+  // ==== ANIMATION STATE ====
+  let start = 0;
+  let showTextAt = 0;
+
+  function init() {
+    // scale responsive
+    scale = Math.min(W, H) * HEART_SCALE_FACTOR;
+
+    // build target points
+    baseTargets = [];
+    for (let i = 0; i < POINTS; i++) {
+      const t = Math.random() * Math.PI * 2;
+      const p = heartPoint(t);
+      baseTargets.push(p);
+    }
+
+    // create particles toward initial target (will be updated each frame for heartbeat)
+    particles = baseTargets.map(p => new Particle(W/2 + p.x*scale, H/2 - p.y*scale));
+
+    // reset timers
+    start = performance.now();
+    showTextAt = start + SHOW_TEXT_AFTER_MS;
+  }
+
+  function restart() {
+    start = performance.now();
+    showTextAt = start + SHOW_TEXT_AFTER_MS;
+
+    // scatter then gather
+    for (let i = 0; i < particles.length; i++) {
+      const p = particles[i];
+      const bt = baseTargets[i];
+      p.reset(W/2 + bt.x*scale, H/2 - bt.y*scale, false);
+    }
+  }
+
+  // restart: touch/click/space
+  window.addEventListener("pointerdown", (e) => {
+    // يمنع مشاكل double tap zoom
+    e.preventDefault?.();
+    restart();
+  }, { passive: false });
+
+  window.addEventListener("keydown", (e) => {
+    if (e.code === "Space") {
+      e.preventDefault();
+      restart();
+    }
+  });
+
+  // ==== DRAW TEXT (TYPEWRITER) ====
+  function drawText(now, hue) {
+    // text center inside heart: move a bit DOWN because heart has top lobes
+    const textX = W / 2;
+    const textY = H / 2 + scale * 3.6;
+
+    const elapsed = Math.max(0, now - showTextAt);
+    const full = `${NAME_LEFT} ${HEART_EMOJI} ${NAME_RIGHT}`;
+
+    // typewriter: chars shown
+    const chars = Math.min(full.length, Math.floor((elapsed / 1000) * TYPE_SPEED));
+    const shown = full.slice(0, Math.max(0, chars));
+
+    // fade in while typing
+    const alpha = Math.min(1, elapsed / 600);
+
+    // responsive font size
+    const size = (Math.min(W, H) < 520) ? TEXT_SIZE_MOBILE : TEXT_SIZE_DESKTOP;
+
+    // pulse text
+    const pulse = 1 + Math.sin(now * 0.005) * 0.04;
+
+    ctx.save();
+    ctx.translate(textX, textY);
+    ctx.scale(pulse, pulse);
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+
+    // glow
+    ctx.globalAlpha = 0.9 * alpha;
+    ctx.shadowColor = `hsla(${(hue+20)%360}, 100%, 70%, 0.95)`;
+    ctx.shadowBlur = 22;
+
+    // outline for readability
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = "rgba(0,0,0,0.85)";
+    ctx.font = `800 ${size}px system-ui, -apple-system, Segoe UI, Roboto, Arial`;
+    if (shown.length) ctx.strokeText(shown, 0, 0);
+
+    // fill
+    ctx.fillStyle = "rgba(255,255,255,0.95)";
+    if (shown.length) ctx.fillText(shown, 0, 0);
+
+    ctx.restore();
+  }
+
+  // ==== BACKGROUND ====
+  function drawBackground(now) {
+    // trails
+    ctx.fillStyle = `rgba(0,0,0,${TRAIL_ALPHA})`;
+    ctx.fillRect(0, 0, W, H);
+
+    // subtle animated glow (modern)
+    const hue = (now * 0.03) % 360;
+    const pulse = 0.5 + 0.5 * Math.sin(now * 0.0015);
+    const r = Math.min(W, H) * (0.55 + pulse * 0.06);
+    const g = ctx.createRadialGradient(W*0.5, H*0.45, 0, W*0.5, H*0.45, r);
+    g.addColorStop(0,   `hsla(${(hue+320)%360}, 100%, 60%, ${0.10 + pulse*0.06})`);
+    g.addColorStop(0.5, `hsla(${(hue+260)%360}, 100%, 60%, ${0.06 + pulse*0.03})`);
+    g.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  // ==== MAIN LOOP ====
+  function animate(now) {
+    // background + glow
+    drawBackground(now);
+
+    // animated color
+    const hue = (now * 0.06) % 360;
+
+    // stronger "dub-dub" heartbeat scale
+    const s1 = Math.max(0, Math.sin(now * BEAT_FREQ));
+    const s2 = Math.max(0, Math.sin(now * BEAT_FREQ + 1.25));
+    const dub  = Math.pow(s1, 2.2);
+    const dub2 = Math.pow(s2, 3.2) * 0.7;
+    const beat = 1 + (dub + dub2) * BEAT_POWER; // أقوى
+
+    // update targets per frame (so the whole heart breathes)
+    for (let i = 0; i < particles.length; i++) {
+      const bt = baseTargets[i];
+      particles[i].tx = W/2 + bt.x * scale * beat;
+      particles[i].ty = H/2 - bt.y * scale * beat;
+    }
+
+    // gather speed factor (slightly faster at start)
+    const k = 1 + Math.min(1.2, (now - start) / 800);
+
+    // draw particles
+    for (const p of particles) {
+      p.update(k);
+      p.draw(hue);
+    }
+
+    // show typewriter text after delay
+    if (now >= showTextAt) {
+      drawText(now, hue);
+    }
+
+    requestAnimationFrame(animate);
+  }
+
+  // ==== START ====
+  resize();
+  init();
+
+  // first frame clear (no trail on first paint)
+  ctx.fillStyle = "black";
+  ctx.fillRect(0, 0, W, H);
+
+  requestAnimationFrame(animate);
+})();
+</script>
+</body>
+</html>
